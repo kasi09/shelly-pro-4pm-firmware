@@ -1,5 +1,11 @@
 # Anzeige fuer den Shelly Pro 4PM auf dem 160x128-Display (ST7735S).
 #
+# Geht zurueck auf https://github.com/mdaskalov/shelly-pro-4pm
+# Das Ursprungsprojekt traegt keine Lizenzangabe - siehe CREDITS.md.
+# Uebernommen: Grundgeruest der Klasse, Schiebeschalter-Grafik, WLAN-Balken.
+# Neu: Tastenfuehrung mit Auswahl und Entprellung, Leistungsanzeige je Kanal,
+# differenzielles Zeichnen gegen Flackern, Farbgebung.
+#
 # Bedienung ueber die drei Tasten unter dem Display:
 #   Button1 = hoch, Button2 = runter, Button3 = gewaehlten Kanal schalten.
 #

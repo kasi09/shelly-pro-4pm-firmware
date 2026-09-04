@@ -15,7 +15,7 @@
   tasmota/include/tasmota_configurations_ESP32.h raeumt USE_DISPLAY nicht ab,
   die Defines hier bleiben also stehen.
 
-  Display laut backup/display.ini: ST7735S, 160x128, SPI,
+  Display laut device-files/display.ini: ST7735S, 160x128, SPI,
   CS 0, CLK 15, MOSI 13, DC 2, Backlight 12.
   Der Universal-Display-Treiber liest diese Datei aus dem Dateisystem.
 */

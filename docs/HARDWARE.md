@@ -13,7 +13,6 @@ Pinout der v1-Referenz.
 | Energiemessung | 2x ADE7953 (SPI), zusammen 4 Kanaele |
 | Ethernet | LAN8720-kompatibler PHY (SMSC8720A), RMII |
 | Display | ST7735S, 160x128, SPI |
-| MAC | `84:1F:E8:xx:xx:xx` (WLAN), `86:1F:E8:xx:xx:xx` (Ethernet) |
 
 ## Header J8 - serielle Schnittstelle
 
@@ -28,10 +27,10 @@ Pinout der v1-Referenz.
 | 5 | TX | Ausgang des ESP32 - an RX des Adapters |
 | 6 | EN / RST | Reset, aktiv low |
 
-Signalbelegung durch den erfolgreichen seriellen Flash am 04.09.2026
-bestaetigt (CH340 an COM5, voller Chip-Erase plus `tasmota32.factory.bin`,
-`Hash of data verified`). Die Zaehlrichtung ist an der Platinenmarkierung
-zu pruefen, bevor der Adapter angeklemmt wird.
+Belegung durch einen erfolgreichen seriellen Flash bestaetigt (CH340-Adapter,
+voller Chip-Erase plus `tasmota32.factory.bin`, `Hash of data verified`).
+Die Zaehlrichtung ist an der Platinenmarkierung zu pruefen, bevor der
+Adapter angeklemmt wird.
 
 ### Es gibt keine Auto-Reset-Beschaltung
 
@@ -47,8 +46,8 @@ Ablauf, der funktioniert:
 4. GPIO0 loesen, dann `esptool` mit `--before no-reset` aufrufen.
 
 ```
-python -m esptool --port COM5 --baud 460800 --before no-reset \
-  write-flash --erase-all 0x0 backup/shellypro4pm_v2.2.1_original_8MB.bin
+python -m esptool --port COM5 --baud 460800 --before no-reset   # Port anpassen \
+  write-flash --erase-all 0x0 original-firmware-backup.bin
 ```
 
 ### Sicherheitshinweis
@@ -66,7 +65,9 @@ haengt. Zusammengebaut meldet dasselbe Board `MCP23S17 found`,
 
 ## MCP23S17 - Portbelegung
 
-Aus `mcp23x.dat` dekodiert und gegen den Teardown geprueft. Die Tasmota-Codes
+Aus `device-files/mcp23x.dat` dekodiert und gegen den Teardown von
+[karlquinsland.com](https://karlquinsland.com/shelly-pro-4pm-teardown/)
+geprueft. Die Tasmota-Codes
 folgen `AGPIO(funktion) = funktion * 32 + index`.
 
 | MCP-Pin | Code | Tasmota | Funktion am Geraet |
@@ -97,8 +98,9 @@ weiterhin direkt.
 
 ## Display
 
-ST7735S, 160x128, SPI. Deskriptor `backup/display.ini`, uebernommen aus
-`tasmota/displaydesc/ST7735S_Pro4PM_display.ini`. Kopfzeile:
+ST7735S, 160x128, SPI. Deskriptor liegt als `device-files/display.ini` bei,
+uebernommen aus `tasmota/displaydesc/ST7735S_Pro4PM_display.ini` im
+Tasmota-Quellbaum. Kopfzeile:
 
 ```
 :H,PRO_4PM,160,128,16,SPI,3,0,15,13,2,12,*,*,20
@@ -116,8 +118,9 @@ Die Hintergrundbeleuchtung erscheint in Tasmota als zusaetzlicher Ausgang
 **POWER5** und ist nach dem Start eingeschaltet. Die vier Relais bleiben
 POWER1 bis POWER4.
 
-Die Werte decken sich mit der ESPHome-Referenzkonfiguration
-`reference/angelnu-pro4pm-base_v1.yaml`, die unabhaengig davon entstanden ist.
+Die Werte decken sich mit `devices/shelly/pro4pm/base_v1.yaml` aus
+[angelnu/esphome](https://github.com/angelnu/esphome) - eine unabhaengig
+entstandene ESPHome-Konfiguration, die als Gegenprobe diente.
 
 ## Temperaturfuehler
 
