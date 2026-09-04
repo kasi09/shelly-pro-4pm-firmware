@@ -1,76 +1,125 @@
-# Anzeige fuer den Shelly Pro 4PM auf dem 160x128-Display (ST7735S).
+# Bedienoberflaeche fuer den Shelly Pro 4PM (ST7735S, 160x128).
 #
-# Geht zurueck auf https://github.com/mdaskalov/shelly-pro-4pm
-# Das Ursprungsprojekt traegt keine Lizenzangabe - siehe CREDITS.md.
-# Uebernommen: Grundgeruest der Klasse, Schiebeschalter-Grafik, WLAN-Balken.
-# Neu: Tastenfuehrung mit Auswahl und Entprellung, Leistungsanzeige je Kanal,
-# differenzielles Zeichnen gegen Flackern, Farbgebung.
+# Eigenstaendige Umsetzung fuer dieses Projekt. Grundlage ist allein die
+# dokumentierte DisplayText-Syntax von Tasmota.
 #
-# Bedienung ueber die drei Tasten unter dem Display:
-#   Button1 = hoch, Button2 = runter, Button3 = gewaehlten Kanal schalten.
+# Eine einzige Ansicht, alles gleichzeitig sichtbar:
 #
-# Die Tasten werden per SetOption73 von den Relais entkoppelt, sonst wuerden
-# sie direkt Relais 1-3 schalten statt zu navigieren. Die externen
-# Klemmenschalter (Switch1-4) bleiben unberuehrt und schalten weiterhin.
+#   18:42                35.1C     Kopf, klein: Uhrzeit und Temperatur
+#   192.168.0.42         -62dBm    Kopf, klein: Adresse und Empfang
+#   ------------------------------
+#   CH 1   *          1234.5W      vier Kanaele, groessere Schrift
+#   CH 2   o             0.0W
+#   CH 3   *           123.4W
+#   CH 4   o             0.0W
+#   ------------------------------
+#   Summe             1357.9W
 #
-# Gegen Flackern wird ausschliesslich differenziell gezeichnet: Jeder Wert
-# merkt sich, was zuletzt auf dem Schirm stand, und wird nur bei echter
-# Aenderung neu ausgegeben. Texte tragen ihre Hintergrundfarbe mit (Bi),
-# ueberschreiben sich also selbst - es wird nie vorher grossflaechig geloescht.
+# Bedienung ueber die drei Tasten am Geraet:
+#   Button1 blaettert aufwaerts, Button2 abwaerts, Button3 schaltet den
+#   markierten Kanal. Die Tasten haengen am Portexpander und wuerden ohne
+#   SetOption73 unmittelbar die Relais 1 bis 3 schalten; init() setzt die
+#   Option daher selbst. Die Klemmenschalter Switch1 bis Switch4 bleiben
+#   unberuehrt und schalten weiterhin direkt.
+#
+# Schutz: Ueberschreitet die gemessene Temperatur TEMP_TRIP, werden alle
+# vier Kanaele abgeschaltet und ein Wiedereinschalten ueber die Taste
+# gesperrt. Die Sperre faellt erst unter TEMP_CLEAR, damit es an der
+# Schwelle nicht flattert. Das laeuft ohne Netzwerk.
+#
+# Aufzeichnung: Alle 15 Minuten wandert der aktuelle Messwert in einen
+# Ringpuffer ueber 24 Stunden, der anschliessend vollstaendig nach
+# CSV_PATH geschrieben wird - vollstaendig statt angehaengt, damit die
+# Datei nicht waechst und keine Rotation noetig ist, die sonst irgendwann
+# den Flash fuellen wuerde.
+#
+# Zeichnen: Jede Bildschirmstelle fuehrt in "cache" den zuletzt
+# ausgegebenen Text mit; ausgegeben wird nur, was sich unterscheidet.
+# Flaechiges Loeschen vor dem Neuzeichnen unterbleibt - es flackert.
+#
+# Berry weicht an drei Stellen von vertrauter Syntax ab, die hier bewusst
+# gemieden werden: Zeichenketten werden mit "+" verbunden (keine implizite
+# Verkettung ueber Zeilen), "//" beginnt ein Lambda statt einer
+# Ganzzahldivision, und der Bedingungsoperator "? :" darf nicht in einem
+# f-String-Platzhalter stehen, weil dort der Doppelpunkt die Formatangabe
+# einleitet.
 
 import string
 
-class ShellyPro4PM
+class Pro4PM_Panel
 
-  var names          # Anzeigename je Kanal
-  var power          # aktuell gelesene Wirkleistung je Kanal
-  var selected       # markierte Zeile, 0..3
-  var wifiSum, wifiSamples
-  var lastKey, lastKeyTime
+  var labels, cursor, watts, cache
+  var guardKey, guardAt
+  var temp, tripped         # Temperatur, Zustand der Schutzabschaltung
+  var lastTouch, dimmed     # letzte Bedienung, Dimmzustand
+  var arch, archAt          # Viertelstundenwerte fuer die Aufzeichnung
 
-  # zuletzt tatsaechlich gezeichneter Zustand - Grundlage des Abgleichs
-  var shownPower     # Leistung als fertiger Text
-  var shownOn        # Schaltzustand
-  var shownSel       # markierte Zeile
-  var shownBars      # Anzahl WLAN-Balken
-
-  # Layout (Display ist 160x128)
-  var W, HDR, ROW, N
-  # Farbindizes der Tasmota-Palette
-  var BG, FG, DIM, ON, SEL
+  # Geometrie
+  var WIDTH, LINE1, LINE2, HEAD_H, ROW_TOP, ROW_H, FOOT_Y, COUNT
+  # Farbstellen der Tasmota-Palette
+  var cBack, cText, cMuted, cLive, cMark, cWarn
+  # Einstellungen
+  var TEMP_TRIP, TEMP_CLEAR, DIM_AFTER, DIM_LOW, DIM_HIGH
+  var ARCH_LEN, CSV_PATH
 
   def init()
-    self.W   = 160
-    self.HDR = 20          # Hoehe der Kopfzeile
-    self.ROW = 27          # 20 + 4*27 = 128
-    self.N   = 4
-    self.BG  = 0           # schwarz
-    self.FG  = 1           # weiss
-    self.DIM = 15          # grau
-    self.ON  = 3           # gruen
-    self.SEL = 4           # blau
+    self.WIDTH   = 160
+    self.LINE1   = 9       # Grundlinie Kopfzeile 1 (Uhrzeit, Temperatur)
+    self.LINE2   = 20      # Grundlinie Kopfzeile 2 (Adresse, Empfang)
+    self.HEAD_H  = 23      # Trennlinie unter dem Kopf
+    self.ROW_TOP = 25      # erste Kanalzeile
+    self.ROW_H   = 17      # 25 + 4*17 = 93
+    self.FOOT_Y  = 95      # Trennlinie ueber dem Fuss
+    self.COUNT   = 4
 
-    self.power       = [0, 0, 0, 0]
-    self.shownPower  = ["", "", "", ""]
-    self.shownOn     = [nil, nil, nil, nil]
-    self.shownSel    = -1
-    self.shownBars   = -1
-    self.selected    = 0
-    self.wifiSum     = 0
-    self.wifiSamples = 0
-    self.lastKey     = -1
-    self.lastKeyTime = 0
-    self.read_names()
+    self.cBack  = 0        # schwarz
+    self.cText  = 1        # weiss
+    self.cMuted = 15       # grau
+    self.cLive  = 3        # gruen, eingeschalteter Kanal
+    self.cMark  = 7        # gelb, Markierung
+    self.cWarn  = 2        # rot, Uebertemperatur
 
-    # Tasten entkoppeln, damit sie navigieren statt zu schalten
+    self.TEMP_TRIP  = 80   # Grad Celsius, ab hier wird abgeschaltet
+    self.TEMP_CLEAR = 70   # Grad Celsius, darunter faellt die Sperre
+    self.DIM_AFTER  = 120  # Sekunden ohne Bedienung bis zum Dimmen
+    self.DIM_LOW    = 10   # Helligkeit gedimmt, Prozent
+    self.DIM_HIGH   = 100  # Helligkeit bei Bedienung, Prozent
+    self.ARCH_LEN   = 96   # Viertelstundenwerte = 24 Stunden
+    self.CSV_PATH   = "/power.csv"
+
+    self.watts     = [0, 0, 0, 0]
+    self.cache     = {}
+    self.cursor    = 0
+    self.temp      = 0
+    self.tripped   = false
+    self.guardKey  = -1
+    self.guardAt   = 0
+    self.lastTouch = tasmota.millis()
+    self.dimmed    = false
+    self.archAt    = -1
+
+    # Ringpuffer fuer die Aufzeichnung: je Kanal eine Liste fester Laenge
+    self.arch = []
+    var ch = 0
+    while ch < self.COUNT
+      var b = []
+      var i = 0
+      while i < self.ARCH_LEN
+        b.push(0)
+        i += 1
+      end
+      self.arch.push(b)
+      ch += 1
+    end
+
+    self.fetch_labels()
     tasmota.cmd("SetOption73 1", true)
-
-    self.add_rules()
+    tasmota.cmd(f"DisplayDimmer {self.DIM_HIGH}", true)
+    self.bind_keys()
     tasmota.add_driver(self)
 
-    self.draw_all()
-    # Noch einmal zeichnen, falls der Startbildschirm dazwischenfunkt
-    tasmota.set_timer(3000, /-> self.draw_all())
+    self.repaint()
+    tasmota.set_timer(3000, /-> self.repaint())
   end
 
   def deinit()
@@ -78,219 +127,315 @@ class ShellyPro4PM
   end
 
   def del()
-    self.remove_rules()
+    self.unbind_keys()
     tasmota.remove_driver(self)
   end
 
-  # ------------------------------------------------------------------ Namen
-  def read_names()
-    self.names = []
-    var friendly = tasmota.cmd("status", true)["Status"]["FriendlyName"]
-    for i: 0..self.N-1
-      var n = i < friendly.size() ? friendly[i] : ""
-      if n == "" || string.find(n, "Tasmota") == 0
-        n = f"CH {i+1}"          # Vorgabenamen ersetzen
+  # --------------------------------------------------------------- Aufbau
+  def fetch_labels()
+    self.labels = []
+    var named = tasmota.cmd("status", true)["Status"]["FriendlyName"]
+    var idx = 0
+    while idx < self.COUNT
+      var caption = idx < named.size() ? named[idx] : ""
+      if caption == "" || string.find(caption, "Tasmota") == 0
+        caption = f"CH {idx + 1}"
       end
-      self.names.push(n)
+      self.labels.push(caption)
+      idx += 1
     end
   end
 
-  # --------------------------------------------------------------- Tastatur
-  def add_rules()
-    # Tasmota meldet Tastendruecke je nach Einstellung als #State oder
-    # #Action. Beides wird registriert; key_event() entprellt, damit ein
-    # Druck nicht doppelt zaehlt, falls beide Ereignisse eintreffen.
-    tasmota.add_rule("Button1#State",  def (v,t,m) self.key_event(0) end)
-    tasmota.add_rule("Button2#State",  def (v,t,m) self.key_event(1) end)
-    tasmota.add_rule("Button3#State",  def (v,t,m) self.key_event(2) end)
-    tasmota.add_rule("Button1#Action", def (v,t,m) self.key_event(0) end)
-    tasmota.add_rule("Button2#Action", def (v,t,m) self.key_event(1) end)
-    tasmota.add_rule("Button3#Action", def (v,t,m) self.key_event(2) end)
-    for i: 0..self.N-1
-      tasmota.add_rule(f"POWER{i+1}#state", def (v,t,m) self.refresh_rows() end)
+  # --------------------------------------------------------------- Tasten
+  def bind_keys()
+    var idx = 0
+    while idx < 3
+      var slot = idx
+      tasmota.add_rule(f"Button{idx + 1}#State",  def (v,t,m) self.tap(slot) end)
+      tasmota.add_rule(f"Button{idx + 1}#Action", def (v,t,m) self.tap(slot) end)
+      idx += 1
+    end
+    idx = 0
+    while idx < self.COUNT
+      tasmota.add_rule(f"POWER{idx + 1}#state", def (v,t,m) self.sync() end)
+      idx += 1
     end
   end
 
-  def remove_rules()
-    for n: ["Button1#State", "Button2#State", "Button3#State",
-            "Button1#Action", "Button2#Action", "Button3#Action"]
-      tasmota.remove_rule(n)
+  def unbind_keys()
+    var idx = 0
+    while idx < 3
+      tasmota.remove_rule(f"Button{idx + 1}#State")
+      tasmota.remove_rule(f"Button{idx + 1}#Action")
+      idx += 1
     end
-    for i: 0..self.N-1
-      tasmota.remove_rule(f"POWER{i+1}#state")
+    idx = 0
+    while idx < self.COUNT
+      tasmota.remove_rule(f"POWER{idx + 1}#state")
+      idx += 1
     end
   end
 
-  # Entprellung: Ereignisse innerhalb von 300 ms gelten als derselbe Druck.
-  def key_event(key)
+  # Ein Druck, der binnen 300 ms erneut gemeldet wird, gilt als derselbe.
+  # Tasmota meldet je nach Einstellung sowohl #State als auch #Action.
+  def tap(slot)
     var now = tasmota.millis()
-    if self.lastKey == key && now - self.lastKeyTime < 300
+    if self.guardKey == slot && now - self.guardAt < 300
       return
     end
-    self.lastKey = key
-    self.lastKeyTime = now
-    if   key == 0  self.move(-1)
-    elif key == 1  self.move(1)
-    else           self.toggle()
+    self.guardKey = slot
+    self.guardAt = now
+    self.wake()
+
+    if slot == 2
+      # Nach einer Schutzabschaltung nicht wieder einschalten
+      if !self.tripped
+        tasmota.cmd(f"POWER{self.cursor + 1} TOGGLE", true)
+      end
+      self.sync()
+      return
+    end
+
+    var step = (slot == 0) ? -1 : 1
+    self.cursor = (self.cursor + step) % self.COUNT
+    if self.cursor < 0
+      self.cursor += self.COUNT
+    end
+    self.sync()
+  end
+
+  # ----------------------------------------------------------- Beleuchtung
+  def wake()
+    self.lastTouch = tasmota.millis()
+    if self.dimmed
+      self.dimmed = false
+      tasmota.cmd(f"DisplayDimmer {self.DIM_HIGH}", true)
     end
   end
 
-  def move(delta)
-    self.selected += delta
-    if self.selected < 0        self.selected = self.N - 1 end
-    if self.selected >= self.N  self.selected = 0          end
-    self.refresh_selection()
-  end
-
-  def toggle()
-    tasmota.cmd(f"POWER{self.selected + 1} TOGGLE", true)
-    self.refresh_rows()
+  def check_dim()
+    if self.dimmed
+      return
+    end
+    if tasmota.millis() - self.lastTouch > self.DIM_AFTER * 1000
+      self.dimmed = true
+      tasmota.cmd(f"DisplayDimmer {self.DIM_LOW}", true)
+    end
   end
 
   # --------------------------------------------------------------- Ausgabe
-  def out(cmd)
-    if cmd != ""
-      tasmota.cmd(f"DisplayText {cmd}", true)
+  def put(slot, payload)
+    if self.cache.find(slot) == payload
+      return false
     end
+    self.cache[slot] = payload
+    tasmota.cmd(f"DisplayText {payload}", true)
+    return true
   end
 
-  def row_y(i)   return self.HDR + i * self.ROW end
-  def row_mid(i) return self.row_y(i) + self.ROW / 2 end
+  def repaint()
+    self.cache = {}
+    tasmota.cmd(f"DisplayText [Ci{self.cText}Bi{self.cBack}z]", true)
+    tasmota.cmd(f"DisplayText [x0y{self.HEAD_H}Ci{self.cMuted}h{self.WIDTH}" +
+                f"x0y{self.FOOT_Y}Ci{self.cMuted}h{self.WIDTH}]", true)
+    self.paint_clock()
+    self.paint_head()
+    self.sync()
+  end
 
-  # Vollstaendiger Aufbau - nur beim Start
-  def draw_all()
-    self.out(f"[Ci{self.FG}Bi{self.BG}z]")
-    self.shownPower = ["", "", "", ""]
-    self.shownOn    = [nil, nil, nil, nil]
-    self.shownSel   = -1
-    self.shownBars  = -1
-    self.sample_wifi()
-    self.out(f"[x4y13Ci{self.FG}Bi{self.BG}f0]Shelly Pro 4PM[x0y{self.HDR-1}Ci{self.DIM}h{self.W}]")
-    self.draw_clock()
-    self.draw_wifi(true)
-    for i: 0..self.N-1
-      self.draw_name(i)
+  def paint_clock()
+    # "t" ersetzt Tasmota selbst, der Befehlstext bleibt gleich - ein
+    # Inhaltsvergleich griffe nie. Daher die Minute als Merkmal.
+    var minute = int(tasmota.rtc()["local"] / 60)
+    if self.cache.find("clock") == minute
+      return
     end
-    self.refresh_rows()
+    self.cache["clock"] = minute
+    tasmota.cmd(f"DisplayText [x3y{self.LINE1}Ci{self.cText}Bi{self.cBack}f0t]", true)
   end
 
-  def draw_name(i)
-    var col = (i == self.selected) ? self.FG : self.DIM
-    var cmd = f"[x8y{self.row_mid(i)}Ci{col}Bi{self.BG}f0]{self.names[i]}    "
-    # Markierungsbalken links
-    var barCol = (i == self.selected) ? self.SEL : self.BG
-    cmd += f"[x0y{self.row_y(i)+2}Ci{barCol}R3:{self.ROW-4}]"
-    self.out(cmd)
-  end
-
-  # Nur die beiden betroffenen Zeilen anfassen, nicht alle vier
-  def refresh_selection()
-    if self.shownSel == self.selected return end
-    var prev = self.shownSel
-    self.shownSel = self.selected
-    if prev >= 0 && prev < self.N
-      self.draw_name(prev)
+  # Temperatur oben rechts, Adresse und Empfang in der zweiten Kopfzeile.
+  # Alles in der kleinen Schrift, damit die Kanaele den Platz behalten.
+  def paint_head()
+    var col = self.cMuted
+    if self.tripped
+      col = self.cWarn
     end
-    self.draw_name(self.selected)
-  end
+    self.put("temp",
+             f"[x112y{self.LINE1}Ci{col}Bi{self.cBack}f0]{self.temp:%5.1f}C")
 
-  # Leistung und Schaltzustand, jeweils nur bei echter Aenderung
-  def refresh_rows()
-    self.refresh_selection()
-    var cmd = ""
-    for i: 0..self.N-1
-      var on = tasmota.get_power(i)
-      var txt = f"{self.power[i]:%6.1f}W"
-      if self.shownPower[i] != txt || self.shownOn[i] != on
-        var col = on ? self.FG : self.DIM
-        cmd += f"[x58y{self.row_mid(i)}Ci{col}Bi{self.BG}f0]{txt}"
-        self.shownPower[i] = txt
-      end
-      if self.shownOn[i] != on
-        cmd += self.switch_glyph(i, on)
-        self.shownOn[i] = on
-      end
+    var net = tasmota.wifi()
+    var ip = net.find("ip")
+    if ip == nil
+      ip = "  ohne Netz  "
     end
-    self.out(cmd)
-  end
+    self.put("ip",
+             f"[x3y{self.LINE2}Ci{self.cMuted}Bi{self.cBack}f0]{ip}     ")
 
-  def switch_glyph(i, state)
-    var w = 26
-    var h = 13
-    var r = h / 2
-    var x = self.W - w - 6
-    var y = self.row_y(i) + (self.ROW - h) / 2
-    var col = state ? self.ON : self.DIM
-    var cx = x + r + (state ? (w - h) : 0)
-    var cy = y + r
-    # Alten Schalter mit Hintergrundfarbe ueberdecken, dann neu zeichnen
-    return f"[x{x}y{y}Ci{self.BG}R{w}:{h}x{x}y{y}Ci{col}U{w}:{h}:{r}x{cx}y{cy}Ci{self.FG}K{r-2}]"
-  end
-
-  def draw_clock()
-    self.out(f"[x124y13Ci{self.FG}Bi{self.BG}f0t]")
-  end
-
-  def draw_wifi(force)
-    var avg = self.wifiSamples == 0 ? 0 : self.wifiSum / self.wifiSamples
-    var bars = 0
-    if avg >= 20 bars = 1 end
-    if avg >= 40 bars = 2 end
-    if avg >= 60 bars = 3 end
-    if avg >= 80 bars = 4 end
-    if !force && bars == self.shownBars return end
-    self.shownBars = bars
-    var x = 104
-    var y = 15
-    var cmd = ""
-    for b: 0..3
-      var col = bars > b ? self.FG : self.DIM
-      var h = (b + 1) * 2
-      cmd += f"Ci{col}x{x + b*4}y{y - h}v{h}x{x + b*4 + 1}y{y - h}v{h}"
+    var rssi = net.find("rssi")
+    var signal = "  --dBm"
+    if rssi != nil
+      signal = f"{rssi:%4d}dBm"
     end
-    self.out(f"[{cmd}]")
+    self.put("rssi",
+             f"[x112y{self.LINE2}Ci{self.cMuted}Bi{self.cBack}f0]{signal}")
   end
 
-  # ------------------------------------------------------------- Messwerte
-  def read_power()
-    var sns = tasmota.cmd("status 10", true)
+  def paint_row(idx)
+    var top = self.ROW_TOP + idx * self.ROW_H
+    var base = top + 12
+    var live = tasmota.get_power(idx)
+    var here = (idx == self.cursor)
+
+    var cMarkNow = here ? self.cMark : self.cBack
+    var cName    = here ? self.cText : self.cMuted
+    var cDot     = live ? self.cLive : self.cMuted
+    var cWatt    = live ? self.cText : self.cMuted
+    var glyph    = live ? "K4" : "k4"
+    var dotY     = top + 8
+
+    self.put(f"mark{idx}",
+             f"[x2y{top + 2}Ci{cMarkNow}R2:{self.ROW_H - 4}]")
+    self.put(f"name{idx}",
+             f"[x9y{base}Ci{cName}Bi{self.cBack}f1]" + f"{self.labels[idx]}     ")
+    self.put(f"dot{idx}",
+             f"[x62y{dotY}Ci{self.cBack}R11:11" +
+             f"x67y{dotY + 5}Ci{cDot}{glyph}]")
+    self.put(f"watt{idx}",
+             f"[x80y{base}Ci{cWatt}Bi{self.cBack}f1]" +
+             f"{self.watts[idx]:%7.1f}W")
+  end
+
+  def paint_total()
+    var sum = 0.0
+    var idx = 0
+    while idx < self.COUNT
+      sum += self.watts[idx]
+      idx += 1
+    end
+    var label = "Summe"
+    var col = self.cMuted
+    if self.tripped
+      label = "AUS! "
+      col = self.cWarn
+    end
+    self.put("total",
+             f"[x9y{self.FOOT_Y + 12}Ci{col}Bi{self.cBack}f1]{label}")
+    self.put("totalval",
+             f"[x80y{self.FOOT_Y + 12}Ci{self.cText}Bi{self.cBack}f1]" +
+             f"{sum:%7.1f}W")
+  end
+
+  def sync()
+    var idx = 0
+    while idx < self.COUNT
+      self.paint_row(idx)
+      idx += 1
+    end
+    self.paint_total()
+  end
+
+  # ------------------------------------------------------------ Messwerte
+  def read_watts()
+    var report = tasmota.cmd("status 10", true)
+    if report == nil return end
+    var sns = report.find("StatusSNS")
     if sns == nil return end
-    var e = sns.find("StatusSNS")
-    if e == nil return end
-    e = e.find("ENERGY")
-    if e == nil return end
-    var p = e.find("Power")
-    if p == nil return end
-    for i: 0..self.N-1
-      if i < p.size()
-        self.power[i] = p[i]
+
+    var probe = sns.find("ANALOG")
+    if probe != nil
+      var t = probe.find("Temperature1")
+      if t != nil
+        self.temp = t
       end
+    end
+
+    var energy = sns.find("ENERGY")
+    if energy == nil return end
+    var reading = energy.find("Power")
+    if reading == nil return end
+    var idx = 0
+    while idx < self.COUNT
+      if idx < reading.size()
+        self.watts[idx] = reading[idx]
+      end
+      idx += 1
     end
   end
 
-  def sample_wifi()
-    var q = tasmota.wifi().find("quality")
-    self.wifiSum += q ? q : 0
-    self.wifiSamples += 1
+  # Schutzabschaltung mit Hysterese
+  def check_temp()
+    if !self.tripped && self.temp >= self.TEMP_TRIP
+      self.tripped = true
+      var idx = 0
+      while idx < self.COUNT
+        tasmota.cmd(f"POWER{idx + 1} OFF", true)
+        idx += 1
+      end
+      print(f"PANEL: {self.temp:.1f}C ueber {self.TEMP_TRIP}C - alle Kanaele abgeschaltet")
+      self.repaint()
+    elif self.tripped && self.temp <= self.TEMP_CLEAR
+      self.tripped = false
+      print(f"PANEL: {self.temp:.1f}C wieder unter {self.TEMP_CLEAR}C - Sperre aufgehoben")
+      self.repaint()
+    end
+  end
+
+  # Viertelstundenwert sichern und die Datei neu schreiben
+  def push_archive()
+    self.archAt = (self.archAt + 1) % self.ARCH_LEN
+    var idx = 0
+    while idx < self.COUNT
+      self.arch[idx][self.archAt] = self.watts[idx]
+      idx += 1
+    end
+    self.write_csv()
+  end
+
+  def write_csv()
+    var f = open(self.CSV_PATH, "w")
+    if f == nil
+      return
+    end
+    f.write("minuten_vor_jetzt;ch1;ch2;ch3;ch4\n")
+    var i = 0
+    while i < self.ARCH_LEN
+      var slot = (self.archAt + 1 + i) % self.ARCH_LEN
+      var age = (self.ARCH_LEN - 1 - i) * 15
+      var line = f"-{age};"
+      var ch = 0
+      while ch < self.COUNT
+        line += f"{self.arch[ch][slot]:.1f}"
+        if ch < self.COUNT - 1
+          line += ";"
+        end
+        ch += 1
+      end
+      f.write(line + "\n")
+      i += 1
+    end
+    f.close()
   end
 
   def every_second()
-    var secs = tasmota.time_dump(tasmota.rtc()["local"])["sec"]
-    if secs % 2 == 0
-      self.read_power()
-      self.refresh_rows()      # zeichnet nur, was sich geaendert hat
+    var stamp = tasmota.rtc()["local"]
+    var sec = stamp % 60
+
+    if sec % 2 == 0
+      self.read_watts()
+      self.check_temp()
+      self.sync()
     end
-    if secs % 10 == 0
-      self.sample_wifi()
-      self.draw_wifi(false)
+    if sec == 0
+      if int(stamp / 60) % 15 == 0
+        self.push_archive()
+      end
     end
-    if secs == 0
-      self.draw_clock()
-      self.wifiSum = 0
-      self.wifiSamples = 0
-    end
+    self.paint_clock()
+    self.paint_head()
+    self.check_dim()
   end
 
 end
 
-return ShellyPro4PM
+return Pro4PM_Panel

@@ -2,28 +2,11 @@
 
 Dieses Projekt steht auf fremder Vorarbeit. Was von wem stammt:
 
-## Berry-Bedienoberflaeche (`tapp/`)
-
-Geht zurueck auf **[mdaskalov/shelly-pro-4pm](https://github.com/mdaskalov/shelly-pro-4pm)**
-("Basic UI for Shelly Pro 4PM flashed with Tasmota").
-
-Uebernommen wurden das Grundgeruest der Klasse, die Darstellung des
-Schiebeschalters ueber die Zeichenbefehle `U` und `K` sowie die Logik der
-WLAN-Balken. Hinzugekommen sind die Tastenfuehrung mit Auswahlcursor und
-Entprellung, die Leistungsanzeige je Kanal, das differenzielle Zeichnen gegen
-Flackern und die Farbgebung.
-
-> **Achtung, ungeklaerte Rechtslage:** Das Ursprungsprojekt steht **ohne
-> Lizenzangabe** auf GitHub. Ohne Lizenz gilt striktes Urheberrecht - eine
-> Weiterverbreitung ist formal nicht gestattet, auch nicht in abgewandelter
-> Form. Vor einer Veroeffentlichung sollte der Autor um Zustimmung gebeten
-> oder die Oberflaeche eigenstaendig neu geschrieben werden.
-
 ## Firmware
 
 **[Tasmota](https://github.com/arendst/Tasmota)** von Theo Arends und
-Mitwirkenden, GPLv3. Dieses Repository enthaelt keinen Tasmota-Quellcode - der
-Bauplan holt ihn zur Bauzeit selbst. Uebernommen sind lediglich zwei
+Mitwirkenden, GPLv3. Dieses Repository enthaelt keinen Tasmota-Quellcode -
+der Bauplan holt ihn zur Bauzeit selbst. Uebernommen sind lediglich zwei
 Konfigurationsdateien:
 
 * `device-files/display.ini` aus `tasmota/displaydesc/ST7735S_Pro4PM_display.ini`
@@ -39,7 +22,24 @@ Konfigurationsdateien:
   ESPHome-Konfiguration, die als Gegenprobe fuer die Portbelegung des
   MCP23S17 und die Display-Pins diente.
 
+## Bedienoberflaeche
+
+`tapp/` ist eine **eigenstaendige Umsetzung** fuer dieses Projekt. Grundlage
+ist allein die dokumentierte DisplayText-Syntax von Tasmota.
+
+Zur Einordnung, weil die Aufgabenstellung naheliegt und es ein aelteres
+Projekt dazu gibt: **[mdaskalov/shelly-pro-4pm](https://github.com/mdaskalov/shelly-pro-4pm)**
+loest dieselbe Aufgabe. Eine fruehere Fassung dieses Repositories baute
+darauf auf. Da jenes Projekt **keine Lizenzangabe** traegt und damit striktes
+Urheberrecht gilt, wurde die Oberflaeche vollstaendig neu geschrieben, bevor
+dieses Repository veroeffentlicht wurde - mit eigenem Aufbau, eigener
+Zustandshaltung und anderer Darstellung (Zustandspunkt statt Schiebeschalter,
+Empfangsstaerke als Zahl statt Balkengrafik, Summenzeile, zweizeiliger Kopf).
+Es wird hier genannt, weil es die Vorlage der abgeloesten Fassung war und
+weil es Nachbauern als Alternative dienen kann.
+
 ## Dieses Repository
 
-Bauplan, Konfiguration und Dokumentation stehen unter der MIT-Lizenz, siehe
-`LICENSE`. Diese gilt **nicht** fuer die oben genannten fremden Bestandteile.
+Bauplan, Konfiguration, Bedienoberflaeche und Dokumentation stehen unter der
+MIT-Lizenz, siehe `LICENSE`. Diese gilt **nicht** fuer die oben genannten
+fremden Bestandteile aus dem Tasmota-Projekt.
