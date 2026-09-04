@@ -24,6 +24,10 @@ Der Shelly Pro 4PM schaltet **vier Stromkreise mit Netzspannung**, je bis 16 A.
 
 Benutzung auf eigene Gefahr. Es wird keinerlei Haftung uebernommen.
 
+Was auf echter Hardware nachweislich lief und was nicht, steht unter
+[Stand der Erprobung](#stand-der-erprobung) - **die Uebertemperatur-Abschaltung
+ist darunter, sie wurde nie ausgeloest.**
+
 ---
 
 ## Das Problem
@@ -164,7 +168,10 @@ Hysterese verhindert ein Flattern an der Schwelle.
 Das laeuft vollstaendig auf dem Geraet, ohne Netzwerk, ohne Server. Beide
 Schwellen stehen als Konstanten am Anfang von `tapp/ShellyPro4PM.be`.
 
-> Das ist eine Zusatzmassnahme in Software und **ersetzt keine
+> **Nicht erprobt:** Die Abschaltung wurde nie ausgeloest - die Schwelle
+> wurde im Betrieb nie erreicht. Siehe [Stand der Erprobung](#stand-der-erprobung).
+>
+> Ausserdem ist das eine Zusatzmassnahme in Software und **ersetzt keine
 > Absicherung der Installation**. Leitungsschutz und Verkabelung bleiben
 > Sache der Elektrofachkraft.
 
@@ -218,6 +225,51 @@ Syntaxfehler auf dem Geraet auffallen:
 * Der Bedingungsoperator `? :` darf **nicht** in einem f-String-Platzhalter
   stehen - dort leitet der Doppelpunkt die Formatangabe ein. Bedingungen
   vorher in eine Variable schreiben.
+
+## Stand der Erprobung
+
+Ehrlich aufgeschluesselt, was auf echter Hardware nachweislich gelaufen ist
+und was nicht. Getestet wurde auf einem Board `ShellyPro4PM-Main_v2.2.1` mit
+Tasmota 15.6.0.
+
+### Bestaetigt
+
+| Funktion | Nachweis |
+|---|---|
+| Display gemeinsam mit MCP23S17 und ADE7953 | laeuft, `DSP: PRO_4PM initialized` |
+| Vier Relais schalten | ueber Tasten und Weboberflaeche |
+| Tastenfuehrung, Auswahl, Entprellung | am Geraet bedient |
+| Aufzeichnung nach `/power.csv` | Datei wird geschrieben, Format stimmt |
+| Dimmung nach Inaktivitaet | faehrt selbsttaetig auf 10 %, Tastendruck holt zurueck |
+| OTA-Einspielung in den Safeboot-Slot | mehrfach durchgefuehrt |
+
+### Nicht getestet
+
+**Die Uebertemperatur-Abschaltung wurde nie ausgeloest.** Der Code ist
+vorhanden und der Temperaturfuehler liefert plausible Werte (rund 33 °C im
+Leerlauf), aber die Schwelle von 80 °C wurde nie erreicht. Ob das Abschalten
+aller vier Kanaele im Ernstfall zuverlaessig greift, ist damit **nicht
+belegt**. Wer sich darauf verlassen will, sollte es einmal pruefen, indem er
+`TEMP_TRIP` in `tapp/ShellyPro4PM.be` voruebergehend unter die aktuelle
+Temperatur setzt.
+
+Das gilt ohnehin nur zusaetzlich - **Leitungsschutz und Absicherung der
+Installation ersetzt diese Funktion nicht.**
+
+**Die Energiemessung wurde nie unter Last betrieben.** Waehrend der gesamten
+Entwicklung lag an L1 bis L4 keine Spannung an. Alle Kanaele meldeten
+durchgehend 0 W. Dass die Werte unter realer Last richtig angezeigt,
+summiert und aufgezeichnet werden, ist plausibel, aber unbelegt.
+
+**Die Spannungsmessung ist nicht kalibriert.** Das Geraet meldet ohne
+anliegende Netzspannung einen Wert um 3100 statt eines plausiblen. Vor der
+Nutzung der Messwerte ist gegen ein bekanntes Referenzmessgeraet zu
+kalibrieren:
+
+```
+VoltSet <gemessene Spannung>
+AmpSet  <gemessener Strom>
+```
 
 ## Aufbau des Repositories
 
