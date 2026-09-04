@@ -47,6 +47,43 @@ Auf dem Geraet liegen bereits `display.ini`, `mcp23x.dat` und die Berry-UI
 `ShellyPro4PM.tapp` im Dateisystem. Es fehlt ausschliesslich der
 Display-Treiber in der Firmware.
 
+## Was hier liegt
+
+| Pfad | Inhalt |
+|---|---|
+| `config/user_config_override.h` | schaltet die Display-Treiber zusaetzlich ein |
+| `config/platformio_override.ini` | Bauumgebung, ohne LVGL |
+| `tapp/` | Berry-Bedienoberflaeche fuer das Display |
+| `docs/HARDWARE.md` | Pinbelegung, Header J8, MCP23S17, Display |
+| `.github/workflows/` | der Bauplan |
+
+## Bedienoberflaeche
+
+`tapp/` wird vom Workflow zu `ShellyPro4PM.tapp` gepackt und liegt dem
+Artefakt bei. Die Datei gehoert ins Dateisystem des Geraets (Consoles ->
+Manage File system), von wo Tasmota sie beim Start selbst laedt.
+
+**Wichtig:** Das Archiv muss **unkomprimiert** sein (`ZIP_STORED`). Berry
+liest keine deflate-gepackten Pakete und ignoriert sie beim Start wortlos -
+ohne Fehlermeldung im Log. Der Workflow prueft das mit einer Zusicherung.
+
+Bedienung ueber die drei Tasten unter dem Display:
+
+| Taste | Tasmota | Funktion |
+|---|---|---|
+| 1 | Button1 | Auswahl nach oben |
+| 2 | Button2 | Auswahl nach unten |
+| 3 | Button3 | gewaehlten Kanal schalten |
+
+Die Oberflaeche setzt beim Start `SetOption73 1`, sonst wuerden die Tasten
+direkt die Relais 1-3 schalten statt zu navigieren. Die externen
+Klemmenschalter (Switch1-4) bleiben davon unberuehrt.
+
+Gezeichnet wird ausschliesslich differenziell: Jeder Wert merkt sich, was
+zuletzt auf dem Schirm stand, und wird nur bei echter Aenderung neu
+ausgegeben. Ein flaechiges Loeschen vor dem Neuzeichnen fuehrt sonst zu
+sichtbarem Flackern.
+
 ## Ergebnis abholen
 
 Reiter **Actions** -> letzter Lauf -> Abschnitt **Artifacts** ->

@@ -56,9 +56,30 @@ jobs:
           fi
           echo "::notice::Passt - $((SIZE / 1024)) kB von 2880 kB, $(( (LIMIT - SIZE) / 1024 )) kB frei."
 
+      # Die Berry-Oberflaeche wird als .tapp verpackt. Entscheidend ist
+      # ZIP_STORED: Berry in Tasmota liest nur unkomprimierte Archive und
+      # ignoriert ein deflate-gepacktes Paket beim Start wortlos.
+      - name: Berry-Oberflaeche als .tapp packen
+        run: |
+          python - <<'EOF'
+          import zipfile, pathlib
+          out = pathlib.Path("tasmota-src/build_output/firmware/ShellyPro4PM.tapp")
+          src = pathlib.Path("tapp")
+          with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED) as z:
+              for name in ("autoexec.be", "ShellyPro4PM.be"):
+                  z.write(src / name, arcname=name)
+          with zipfile.ZipFile(out) as z:
+              for i in z.infolist():
+                  assert i.compress_type == zipfile.ZIP_STORED, i.filename
+                  print(f"  {i.filename}: {i.file_size} B, unkomprimiert")
+          print(f"{out.name}: {out.stat().st_size} B")
+          EOF
+
       - name: Firmware zum Download bereitstellen
         uses: actions/upload-artifact@v4
         with:
           name: shellypro4pm-firmware
-          path: tasmota-src/build_output/firmware/*.bin
+          path: |
+            tasmota-src/build_output/firmware/*.bin
+            tasmota-src/build_output/firmware/*.tapp
           if-no-files-found: error
