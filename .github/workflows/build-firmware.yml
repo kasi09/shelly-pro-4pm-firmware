@@ -1,0 +1,64 @@
+name: Shelly Pro 4PM Firmware bauen
+
+# Startet bei jedem Push und laesst sich auch von Hand ausloesen
+# (Reiter "Actions" -> diesen Workflow waehlen -> "Run workflow").
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diese Konfiguration auschecken
+        uses: actions/checkout@v4
+
+      - name: Python bereitstellen
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: PlatformIO installieren
+        run: pip install --upgrade platformio
+
+      # Exakt die Version, die auf dem Geraet laeuft. Bei einem Versionswechsel
+      # koennten die gespeicherten Einstellungen des Geraets verworfen werden.
+      - name: Tasmota v15.6.0 holen
+        run: git clone --depth 1 --branch v15.6.0 https://github.com/arendst/Tasmota.git tasmota-src
+
+      - name: Eigene Konfiguration einsetzen
+        run: |
+          cp config/user_config_override.h tasmota-src/tasmota/user_config_override.h
+          cp config/platformio_override.ini tasmota-src/platformio_override.ini
+          echo "--- user_config_override.h ---"
+          cat tasmota-src/tasmota/user_config_override.h
+          echo "--- platformio_override.ini ---"
+          cat tasmota-src/platformio_override.ini
+
+      - name: Firmware bauen
+        working-directory: tasmota-src
+        run: pio run -e tasmota32-shellypro4pm
+
+      # app0 auf dem Geraet ist 2880 kB gross. Passt die Binary nicht hinein,
+      # laesst sie sich nicht per OTA einspielen - deshalb hier hart pruefen.
+      - name: Groesse gegen den 2880-kB-Slot pruefen
+        working-directory: tasmota-src
+        run: |
+          BIN=build_output/firmware/tasmota32-shellypro4pm.bin
+          ls -la build_output/firmware/
+          SIZE=$(stat -c%s "$BIN")
+          LIMIT=$((2880 * 1024))
+          echo "Groesse : $SIZE Bytes ($((SIZE / 1024)) kB)"
+          echo "Limit   : $LIMIT Bytes (2880 kB)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::Binary ist zu gross fuer den app0-Slot des Geraets."
+            exit 1
+          fi
+          echo "::notice::Passt - $((SIZE / 1024)) kB von 2880 kB, $(( (LIMIT - SIZE) / 1024 )) kB frei."
+
+      - name: Firmware zum Download bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: shellypro4pm-firmware
+          path: tasmota-src/build_output/firmware/*.bin
+          if-no-files-found: error
